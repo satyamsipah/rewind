@@ -42,7 +42,10 @@ export const UuidV7 = z
 export const VectorClock = z.record(z.string().uuid(), z.number().int().nonnegative())
 export type VectorClock = z.infer<typeof VectorClock>
 
-export const EntityType = z.enum(['task', 'list'])
+/** 'user' is the entity type for preference events (PreferenceSet) — the
+ * entity_id is the user's own id, since a preference belongs to the
+ * person, not to any task or list. */
+export const EntityType = z.enum(['task', 'list', 'user'])
 export type EntityType = z.infer<typeof EntityType>
 
 /**

@@ -2,7 +2,8 @@ import { z } from 'zod'
 import { EventEnvelope } from './envelope'
 
 /**
- * The 15 event types for Rewind, exactly as specified. Two shape decisions
+ * The original 15 event types for Rewind, plus `PreferenceSet` added for
+ * the UI phase (docs/DECISIONS.md "Preference sync"). Two shape decisions
  * apply across the union (see docs/DECISIONS.md for the full rationale):
  *
  * - Value-replacing events carry `{ from, to }`. This makes `inverse()`
@@ -35,7 +36,18 @@ function event<Type extends string, Payload extends z.ZodTypeAny>(type: Type, pa
 
 export const TaskCreated = event(
   'TaskCreated',
-  z.object({ list_id: z.string().uuid(), title: z.string().min(1), position: Position }),
+  z.object({
+    list_id: z.string().uuid(),
+    title: z.string().min(1),
+    position: Position,
+    // Optional, defaults to null (top-level task) — added for subtasks
+    // without a schema_version bump. `.optional()` here means an older
+    // client's event (minted before subtasks existed) still validates
+    // unchanged, and the reducer treats a missing field exactly like an
+    // explicit null (reducer.ts `buildTask`). See docs/DECISIONS.md
+    // "Subtasks: additive optional field, not a version bump".
+    parent_task_id: z.string().uuid().nullable().optional(),
+  }),
 )
 
 export const TaskRenamed = event(
@@ -57,7 +69,15 @@ export const TaskDeleted = event('TaskDeleted', z.object({}))
 
 export const TaskRestored = event('TaskRestored', z.object({}))
 
-const MoveEndpoint = z.object({ list_id: z.string().uuid(), position: Position })
+// parent_task_id travels in the SAME atomic pair as list_id/position, for
+// the same reason list_id and position do (docs/DECISIONS.md): a
+// concurrent re-parent and a concurrent list-move must never merge into a
+// task that's in one device's list AND another device's parent at once.
+const MoveEndpoint = z.object({
+  list_id: z.string().uuid(),
+  position: Position,
+  parent_task_id: z.string().uuid().nullable().optional(),
+})
 export const TaskMoved = event(
   'TaskMoved',
   z.object({ from: MoveEndpoint, to: MoveEndpoint }),
@@ -97,6 +117,25 @@ export const NoteAttached = event(
   z.object({ from: z.string().nullable(), to: z.string().nullable() }),
 )
 
+/**
+ * A generic user preference write — `entity_type: 'user'`,
+ * `entity_id: <the user's own id>`. One event type covers every current
+ * and future preference (docs/DECISIONS.md "Preference sync"): `key` is a
+ * closed-but-extensible enum, `from`/`to` are opaque strings (a plain
+ * value for an enum-like preference such as theme mode, or JSON for a
+ * structured one such as a custom theme's derived token set). Merges via
+ * plain LWW-register per key (lib/domain/reducer.ts `buildPreferences`) —
+ * last device to change a personal setting wins; there's no data-loss
+ * risk in a single scalar preference the way there is with `tags`.
+ */
+export const PreferenceKey = z.enum(['theme_mode', 'theme_accent', 'theme_custom'])
+export type PreferenceKey = z.infer<typeof PreferenceKey>
+
+export const PreferenceSet = event(
+  'PreferenceSet',
+  z.object({ key: PreferenceKey, from: z.string().nullable(), to: z.string().nullable() }),
+)
+
 export const EVENT_SCHEMAS = {
   TaskCreated,
   TaskRenamed,
@@ -113,6 +152,7 @@ export const EVENT_SCHEMAS = {
   ListRenamed,
   ListArchived,
   NoteAttached,
+  PreferenceSet,
 } as const
 
 export type EventType = keyof typeof EVENT_SCHEMAS
@@ -136,6 +176,7 @@ export const AnyEvent = z.discriminatedUnion('type', [
   ListRenamed,
   ListArchived,
   NoteAttached,
+  PreferenceSet,
 ])
 export type AnyEvent = z.infer<typeof AnyEvent>
 
