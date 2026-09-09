@@ -27,7 +27,7 @@ const RAW_VARS: (keyof AccentRaw)[] = [
   'accentFgDark',
 ]
 
-interface AccentRaw {
+export interface AccentRaw {
   accentLight: string
   accentHoverLight: string
   accentSubtleLight: string
@@ -62,25 +62,40 @@ function toRaw(light: ThemeTokens | ReturnType<typeof accentTokens>['light'], da
   }
 }
 
-function writeRawVars(raw: AccentRaw): void {
-  const root = document.documentElement
-  for (const key of RAW_VARS) {
-    root.style.setProperty(CSS_VAR_NAME[key], raw[key])
-  }
+/** The real `--accent-*` custom-property names, keyed by CSS var name —
+ * this is the exact shape lib/client/theme.ts caches to localStorage so
+ * app/layout.tsx's pre-hydration boot script can replay it with a plain
+ * `setProperty` loop, no derivation logic duplicated into an inline
+ * script. */
+export type AccentCssVars = Record<string, string>
+
+function toCssVarMap(raw: AccentRaw): AccentCssVars {
+  const out: AccentCssVars = {}
+  for (const key of RAW_VARS) out[CSS_VAR_NAME[key]] = raw[key]
+  return out
 }
 
-export function applyBuiltInAccent(name: AccentName): void {
+export function applyAccentCssVars(vars: AccentCssVars): void {
+  const root = document.documentElement
+  for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value)
+}
+
+export function applyBuiltInAccent(name: AccentName): AccentCssVars {
   const { light, dark } = accentTokens(name)
-  writeRawVars(toRaw(light, dark))
+  const vars = toCssVarMap(toRaw(light, dark))
+  applyAccentCssVars(vars)
+  return vars
 }
 
 /** Returns the derivation report so the caller (the theme editor) can
  * decide whether to apply it — see docs/DECISIONS.md "reject a theme
  * that fails contrast rather than shipping it". */
-export function applyCustomAccent(baseColor: string): ReturnType<typeof deriveTheme> {
+export function applyCustomAccent(baseColor: string): ReturnType<typeof deriveTheme> & { vars: AccentCssVars | null } {
   const result = deriveTheme(baseColor)
-  if (result.ok) writeRawVars(toRaw(result.light, result.dark))
-  return result
+  if (!result.ok) return { ...result, vars: null }
+  const vars = toCssVarMap(toRaw(result.light, result.dark))
+  applyAccentCssVars(vars)
+  return { ...result, vars }
 }
 
 export type ThemeMode = 'light' | 'dark' | 'system'
