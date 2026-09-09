@@ -32,9 +32,19 @@ function emit(event: SyncEvent): void {
   for (const listener of listeners) listener(event)
 }
 
+/**
+ * Registers `listener` for FUTURE status changes only — it deliberately
+ * does NOT invoke `listener` synchronously with the current status.
+ * `useSyncStatus` (lib/client/hooks.ts) is built on
+ * `useSyncExternalStore`, whose contract already gets the current value
+ * from `getSnapshot()`; a subscribe function that ALSO calls back
+ * synchronously during the subscribe phase itself (as this used to)
+ * triggers React's "Maximum update depth exceeded" guard, because
+ * `onStoreChange()` was being invoked before `subscribe()` had even
+ * returned. Call `getSyncStatus()` directly for the current value.
+ */
 export function subscribeSyncStatus(listener: (event: SyncEvent) => void): () => void {
   listeners.add(listener)
-  listener({ status })
   return () => listeners.delete(listener)
 }
 

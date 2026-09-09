@@ -4,7 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { useSyncExternalStore } from 'react'
 import { db } from './db'
 import type { TaskState } from '@/lib/domain/state'
-import { getSyncStatus, subscribeSyncStatus, type SyncEvent, type SyncStatus } from './sync-engine'
+import { getSyncStatus, subscribeSyncStatus, type SyncEvent } from './sync-engine'
 import { canRedo, canUndo } from './undo'
 
 /**
@@ -56,8 +56,15 @@ export function useUndoAvailability() {
 /** The visible sync status indicator (item 2: "synced / syncing /
  * offline / conflict"). useSyncExternalStore rather than useState+useEffect
  * so this is safe to read during SSR (returns the server snapshot) and
- * never tears between renders. */
+ * never tears between renders.
+ *
+ * Both snapshot getters MUST return a referentially-stable value when
+ * nothing has changed — a fresh object literal on every call (even one
+ * that's deep-equal) makes React think the store changed on every
+ * render, which is exactly what triggered "Maximum update depth
+ * exceeded" here until this was fixed to reuse module-level constants. */
 let lastEvent: SyncEvent = { status: getSyncStatus() }
+const SERVER_SNAPSHOT: SyncEvent = { status: 'offline' }
 
 export function useSyncStatus(): SyncEvent {
   return useSyncExternalStore(
@@ -67,6 +74,6 @@ export function useSyncStatus(): SyncEvent {
         onStoreChange()
       }),
     () => lastEvent,
-    () => ({ status: 'offline' as SyncStatus }),
+    () => SERVER_SNAPSHOT,
   )
 }
