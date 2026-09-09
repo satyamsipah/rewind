@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "defaultMode": "default",
+    "allow": [
+      "Bash(npm *)", "Bash(npx *)", "Bash(node *)", "Bash(pnpm *)",
+      "Bash(git status)", "Bash(git diff *)", "Bash(git log *)",
+      "Bash(git add *)", "Bash(git commit *)", "Bash(git push *)",
+      "Bash(gh *)", "Bash(vercel *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)", "Bash(git push --force *)",
+      "Read(./.env)", "Read(./.env.*)"
+    ]
+  },
+  "attribution": { "commit": "", "pr": "" }
+}
