@@ -1,5 +1,6 @@
 import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
+import globals from 'globals'
 
 /**
  * Flat ESLint config. Full `eslint-config-next` integration arrives with
@@ -16,6 +17,14 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
     },
+  },
+  {
+    // Plain Node scripts (scripts/check-no-hex.mjs) aren't matched by
+    // typescript-eslint's config (TS files only), so they fall through to
+    // js.configs.recommended alone, which has no idea `process`/`console`
+    // are real Node globals without this.
+    files: ['scripts/**/*.mjs', '*.config.mjs'],
+    languageOptions: { globals: globals.node },
   },
   {
     files: ['lib/domain/**/*.ts'],

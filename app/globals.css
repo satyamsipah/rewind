@@ -1,0 +1,215 @@
+@import 'tailwindcss';
+
+/*
+ * Token system (CLAUDE.md principle 6): every colour, spacing value,
+ * radius, and font size a component uses comes from a CSS custom
+ * property here — never a hard-coded value in a component (enforced by
+ * scripts/check-no-hex.mjs, run in `pnpm lint`). See docs/DECISIONS.md
+ * "Theme token architecture".
+ *
+ * Two independent axes, not N named themes: MODE (light/dark/system) and
+ * ACCENT (default/violet/amber/custom) each contribute their own slice of
+ * tokens, composed via `data-theme` and the `--accent-*` custom
+ * properties lib/theme/apply.ts writes at runtime — so "dark + violet" is
+ * just the dark block plus the violet accent, not a fifth hand-authored
+ * theme.
+ *
+ * Colour values are OKLCH function notation, never hex — OKLCH's
+ * lightness tracks perceived lightness across hues, which is what makes
+ * the contrast-safe derivation in lib/theme/palette.ts reliable (see that
+ * file for the full rationale). Using oklch() everywhere, including
+ * here, also means scripts/check-no-hex.mjs needs zero exceptions/
+ * allowlist — there is no file where hex is "allowed".
+ */
+
+:root {
+  /* ---- Neutral scale (light) — pure gray, zero chroma. The built-in,
+     un-customised look; a custom theme's neutrals get a faint accent
+     tint instead (lib/theme/palette.ts `deriveMode`). ---- */
+  --background: oklch(0.99 0 0);
+  --foreground: oklch(0.18 0 0);
+  --card: oklch(0.97 0 0);
+  --card-foreground: oklch(0.18 0 0);
+  --popover: oklch(0.97 0 0);
+  --popover-foreground: oklch(0.18 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.42 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.18 0 0);
+  --border: oklch(0.82 0 0);
+  --input: oklch(0.82 0 0);
+
+  /* ---- Destructive — fixed, not accent-customisable, derived once via
+     lib/theme/palette.ts's own pipeline (deriveTheme('oklch(0.55 0.18
+     25)')) so it's validated the same way everything else is. ---- */
+  --destructive: oklch(0.55 0.18 25);
+  --destructive-foreground: oklch(0.98 0 25);
+
+  /* ---- Accent (raw, per-mode) — factory "default" preset values,
+     overwritten by lib/theme/apply.ts on load per the user's stored
+     PreferenceSet. Present here only so first paint (before JS runs)
+     isn't unstyled. ---- */
+  --accent-light: oklch(0.55 0.156 250);
+  --accent-hover-light: oklch(0.48 0.136 250);
+  --accent-subtle-light: oklch(0.94 0.03 250);
+  --accent-fg-light: oklch(0.98 0 250);
+  --accent-dark: oklch(0.72 0.151 250);
+  --accent-hover-dark: oklch(0.79 0.111 250);
+  --accent-subtle-dark: oklch(0.28 0.06 250);
+  --accent-fg-dark: oklch(0.15 0 250);
+
+  /* ---- Public accent tokens — aliased to the light half by default;
+     the [data-theme="dark"] block and the prefers-color-scheme query
+     below repoint these at the dark half. ---- */
+  --primary: var(--accent-light);
+  --primary-foreground: var(--accent-fg-light);
+  --ring: var(--accent-light);
+  /* shadcn/ui's own "accent" means a subtle hover-state background, NOT
+     the brand colour — kept distinct from --primary on purpose. We tint
+     it with the brand colour anyway (accent-subtle) rather than plain
+     gray, which reads as more cohesive for a product whose whole accent
+     is user-customisable. */
+  --accent: var(--accent-subtle-light);
+  --accent-foreground: var(--foreground);
+
+  /* ---- Radius ---- */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-full: 9999px;
+  --radius: var(--radius-md);
+
+  /* ---- Spacing (4px scale) ---- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  /* ---- Typography ---- */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+}
+
+[data-theme='dark'] {
+  --background: oklch(0.17 0 0);
+  --foreground: oklch(0.95 0 0);
+  --card: oklch(0.22 0 0);
+  --card-foreground: oklch(0.95 0 0);
+  --popover: oklch(0.22 0 0);
+  --popover-foreground: oklch(0.95 0 0);
+  --muted: oklch(0.22 0 0);
+  --muted-foreground: oklch(0.7 0 0);
+  --secondary: oklch(0.22 0 0);
+  --secondary-foreground: oklch(0.95 0 0);
+  --border: oklch(0.34 0 0);
+  --input: oklch(0.34 0 0);
+
+  --destructive: oklch(0.72 0.174 25);
+  --destructive-foreground: oklch(0.15 0 25);
+
+  --primary: var(--accent-dark);
+  --primary-foreground: var(--accent-fg-dark);
+  --ring: var(--accent-dark);
+  --accent: var(--accent-subtle-dark);
+  --accent-foreground: var(--foreground);
+}
+
+/* System mode: no explicit data-theme attribute at all — lib/theme/
+   apply.ts's applyMode('system') removes it, letting the OS preference
+   decide. Duplicates the dark block's values rather than referencing it,
+   since a media query can't conditionally apply an attribute selector. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']):not([data-theme='dark']) {
+    --background: oklch(0.17 0 0);
+    --foreground: oklch(0.95 0 0);
+    --card: oklch(0.22 0 0);
+    --card-foreground: oklch(0.95 0 0);
+    --popover: oklch(0.22 0 0);
+    --popover-foreground: oklch(0.95 0 0);
+    --muted: oklch(0.22 0 0);
+    --muted-foreground: oklch(0.7 0 0);
+    --secondary: oklch(0.22 0 0);
+    --secondary-foreground: oklch(0.95 0 0);
+    --border: oklch(0.34 0 0);
+    --input: oklch(0.34 0 0);
+
+    --destructive: oklch(0.72 0.174 25);
+    --destructive-foreground: oklch(0.15 0 25);
+
+    --primary: var(--accent-dark);
+    --primary-foreground: var(--accent-fg-dark);
+    --ring: var(--accent-dark);
+    --accent: var(--accent-subtle-dark);
+    --accent-foreground: var(--foreground);
+  }
+}
+
+/* Tailwind v4: mapping tokens straight to utilities in the SAME file
+   they're defined in (docs/DECISIONS.md) — `bg-background`, `text-
+   foreground`, `bg-primary`, `text-primary-foreground`, `rounded-md`,
+   `text-sm`, etc. all fall out of this block with no JS config. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-full: var(--radius-full);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+/* Visible focus rings everywhere (item 8) — never suppressed, only
+   restyled to use the token system. */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
