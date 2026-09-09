@@ -247,3 +247,292 @@ one project rule (`lib/domain/**` may not reference `Date` or
 components/pages yet, so full `eslint-config-next` integration (with its
 React/JSX/accessibility rules) is deferred to the UI phase rather than
 configured against code that doesn't exist yet.
+
+## Offline-first client, theming, history, PWA
+
+Scope: a client that works fully offline and makes the event log visible
+and useful — the Dexie local store, the sync engine, the task UI,
+history/time-travel, undo/redo moved client-side, the theme token system
+and custom theme editor, the command palette, and a PWA shell. Design
+review for the sync engine and theme architecture happened before any
+code was written; three forks were decided explicitly rather than picked
+silently (all three matched the recommendation given):
+
+- **Tailwind v4**, not v3 — `@theme` lives in the same CSS file as the
+  token definitions themselves (app/globals.css), so there's one source
+  of truth for "a token system, not a class toggle" instead of a CSS file
+  and a JS config kept in sync by hand.
+- **Undo/redo moved client-side** — see below.
+- **A generic `PreferenceSet` event**, not a dedicated `ThemeChanged` type
+  — see below.
+
+### Client sync architecture
+
+[lib/client/db.ts](../lib/client/db.ts) keeps the full local event log
+(`events`), not just a projection — History and time travel need to work
+offline too (item 4), which isn't possible from a projection alone. A
+small `outbox` queue table (not a `pending` flag on `events`) tracks
+what's unsynced: a separate table stays tiny regardless of how large the
+full log grows, and keeps `getPending()` a cheap read instead of an
+indexed scan over the whole history. `tasks`/`lists`/`preferences` are
+the live projection, kept current the same way
+[lib/db/projections.ts](../lib/db/projections.ts) does server-side: on
+any new event, replay just that entity's local slice through the shared
+`reduce()` and upsert — one reducer implementation, isomorphic, so client
+and server can never disagree about what a task looks like.
+
+**Trigger strategy** ([lib/client/sync-engine.ts](../lib/client/sync-engine.ts)):
+debounced ~300ms after a local mutation, immediately on `window.online`,
+on tab focus (`visibilitychange`), on an SSE nudge, plus a 30s fallback
+interval. Backoff is exponential with **full jitter**
+(`random(0, min(cap, base·2ⁿ))`) rather than a fixed-floor jitter — it
+spreads retries across the whole window instead of clustering near a
+floor, which is what actually prevents many clients from retrying in
+lockstep after a shared outage.
+
+**Status is `offline | syncing | synced | error | signed_out`** —
+deliberately no sticky "conflict" state. Principle 5 means a conflict
+always auto-resolves; there is never a decision left for a person to
+make. What that state would have shown instead is a transient, non-
+blocking toast ("merged 2 changes from another device") whenever a
+pulled remote event touches an entity with a pending local edit — see
+`useMergeToasts` in
+[components/providers/providers.tsx](../components/providers/providers.tsx).
+A 401/403 flips straight to `signed_out` with no backoff (retrying a dead
+session forever would never succeed); a 422 (`batch_rejected`) doesn't
+back off either — the bad ids are quarantined and the rest of the batch
+retries at normal cadence.
+
+**Resume-on-startup needs no "was a request in flight" journal.**
+Idempotent dedupe-by-id (principle 4) means a non-empty outbox on launch
+is always safe to just resend. Getting this right surfaced a real bug:
+`runSyncCycle` was only clearing the outbox for ids the server returned
+in `accepted`, never `duplicates` — so a batch the server committed, but
+whose accept response never reached the client (the literal "app closed
+mid-sync" case), would resend forever as an all-`duplicates` batch that
+never got cleared. Fixed to treat both as confirmed
+([lib/sync/client.ts](../lib/sync/client.ts)), with a regression test
+([test/unit/sync-client.test.ts](../test/unit/sync-client.test.ts)).
+
+A second real bug surfaced by testing, not design review:
+`subscribeSyncStatus` used to invoke its listener synchronously the
+moment something subscribed (so a caller could "get the current value
+immediately"). Under `useSyncExternalStore` (`useSyncStatus`,
+[lib/client/hooks.ts](../lib/client/hooks.ts)), calling `onStoreChange()`
+synchronously *during* the subscribe phase — before `subscribe()` had
+even returned — trips React's "Maximum update depth exceeded" guard. Since
+`useSyncExternalStore`'s `getSnapshot()` already supplies the current
+value, the fix was to make `subscribeSyncStatus` register for future
+changes ONLY; found via manual browser verification (below), not by
+static review.
+
+### Undo/redo: client-owned, not server-owned
+
+**Chosen: move undo/redo ownership to the client**, mirroring the exact
+3-state (active/undone/superseded) machine
+[lib/db/undo.ts](../lib/db/undo.ts) already implements server-side, but
+now authoritative in [lib/client/undo.ts](../lib/client/undo.ts). The
+compensating event is minted through the same `appendLocalEvent` path any
+mutation uses and syncs up like any other event.
+
+**Rejected: keep the server-side stack as the primary path.** It's a
+round trip to find out what's on top of the stack, which item 4's
+"working offline" requirement rules out directly — undo can't wait for a
+network response, and queuing an opaque "undo intent" for later replay is
+worse than useless: by the time it's finally sent, another device's sync
+could have moved the target entity somewhere the queued intent no longer
+makes sense for. The server-side stack isn't deleted — it's still
+correct and still usable for a possible future server-driven surface —
+it's simply not what the UI calls.
+
+One real ordering bug surfaced writing the redo test
+([lib/client/mutations.test.ts](../lib/client/mutations.test.ts) "every
+mutation is undoable, in LIFO order"): `latestOf()` originally picked the
+"most recent" entry in a given state by sorting on the row's own
+autoincrement `id` (creation order). That's correct for the *first*
+undo, but once more than one entry has been through an undo/redo cycle,
+"created first" and "most recently touched" diverge — redoing would
+restore actions in the wrong order. Fixed by adding an `updatedAt`
+stamp bumped on every transition and sorting by that instead.
+
+### Preference sync: a generic event, and subtasks as an additive field
+
+**`PreferenceSet{key, from, to}`**, `entity_type: 'user'`, `key` a closed-
+but-extensible enum (`theme_mode | theme_accent | theme_custom`) — one
+new event type covers every current and future preference, rather than a
+dedicated `ThemeChanged` needing a new type (and a new reducer case) for
+every later preference. Merges via plain LWW-register: no add-wins/
+restore-wins complexity is needed for a personal scalar setting.
+`reduce()` gained a third branch (alongside tasks/lists) folding `user`
+events into a flat `AppState.preferences` slice
+([lib/domain/reducer.ts](../lib/domain/reducer.ts) `buildPreferences`).
+
+**Subtasks** (`TaskCreated`/`TaskMoved` gain `parent_task_id`) are an
+**additive optional field**, not a `schema_version` bump. Since Zod's
+`.optional()` already makes a missing field behave exactly like an
+explicit `null`, a version bump's upcast machinery would add ceremony
+without adding any compatibility a plain optional field doesn't already
+give for free. `parent_task_id` travels in `TaskMoved`'s existing atomic
+`{list_id, position}` pair for the identical split-brain-prevention
+reason `list_id` and `position` already share one write.
+`REDUCER_VERSION` still bumped to 2, so no snapshot taken by an older
+reducer is ever resumed from across this change.
+
+### Theme token architecture
+
+Two independent axes — **mode** (light/dark/system) and **accent**
+(default/violet/amber/custom) — composed via `data-theme` plus eight raw
+`--accent-*` CSS custom properties
+([lib/theme/apply.ts](../lib/theme/apply.ts)) that `app/globals.css`
+aliases per mode, rather than N hand-authored named themes. Mode
+switching is pure CSS (an attribute flip); only an accent change needs
+JS to run, and needs it exactly once per change, not on every mode
+toggle.
+
+**OKLCH, not HSL**, for every token and for the derivation math
+([lib/theme/palette.ts](../lib/theme/palette.ts)): OKLCH's lightness
+tracks *perceived* lightness across hues, so "step to L=0.55" means
+roughly the same contrast regardless of hue, where HSL's lightness
+famously doesn't have that property.
+
+**Custom theme derivation auto-corrects rather than hard-rejecting.**
+Given a base colour, [lib/theme/palette.ts](../lib/theme/palette.ts)
+derives light+dark tokens and checks the WCAG 2.x contrast ratio (via
+`culori.wcagContrast` — the literal AA formula, not the newer perceptual
+APCA algorithm) on every pair the UI actually renders text or a UI
+component with. A failing pair walks the *foreground's* lightness toward
+the accessible extreme (never the hue) until it passes; only if no
+accessible lightness exists anywhere in `[0,1]` — not observed against
+any input tested, including a deliberately extreme one (pure yellow,
+[lib/theme/palette.test.ts](../lib/theme/palette.test.ts)) — does it
+report `ok: false` for the editor to refuse saving. The three built-in
+accents are derived through the exact same pipeline as a custom one
+([lib/theme/presets.ts](../lib/theme/presets.ts)), not a separate
+hand-tuned hex table.
+
+**No hard-coded hex, anywhere — one script, not two linters.**
+[scripts/check-no-hex.mjs](../scripts/check-no-hex.mjs), wired into
+`pnpm lint`, regex-scans `app/`, `components/`, `lib/` (excluding test
+fixtures, which legitimately feed real hex strings in as *input* — a
+colour picker accepts hex). Rejected: ESLint (can't lint `.css`) plus
+Stylelint (would need an allowlist exception for wherever tokens are
+defined) — since every token is authored in `oklch()` function notation,
+one script needs zero exceptions anywhere, including the token file
+itself. The two spec-mandated exceptions that must stay literal CSS
+colours — the Web App Manifest's `background_color`/`theme_color` and
+the `<meta name="theme-color">` viewport field — use `rgb()`, never hex,
+so the rule stays absolute rather than needing a carve-out. The one place
+hex is genuinely unavoidable, `<input type="color">` (a hex-only native
+control), computes its value via `culori.formatHex()` at runtime instead
+of a literal in source
+([components/theme/theme-editor-dialog.tsx](../components/theme/theme-editor-dialog.tsx)) —
+so there's still no hex string anywhere in the file's own text.
+
+Testing this script found a real robustness bug, not just an app one:
+it called `process.exit(1)` immediately after `console.error(...)`,
+which is a known Node footgun — when stdout is a pipe rather than a TTY
+(true for CI, and for a test harness capturing the output), the write
+can still be in flight and get truncated, or the exit status reported
+back to the parent process can come out wrong. Fixed to set
+`process.exitCode` and let Node drain naturally before exiting.
+
+### PWA: a hand-written service worker, not a build plugin
+
+[public/sw.js](../public/sw.js) precaches the app shell (`/`, the
+manifest, the icon, and Next's own JS/CSS bundle) with a stale-while-
+revalidate strategy, and explicitly never intercepts `/api/*` — sync must
+always hit the real network or fail fast, never a stale cached response
+pretending to be live server state. Hand-written rather than a Workbox/
+`next-pwa` dependency: the shell-caching need here is small and well-
+bounded, and a few dozen explicit lines beat a build plugin whose
+generated output is harder to audit for this scope.
+
+**app/page.tsx stays a static Server Component**
+([components/app-shell.tsx](../components/app-shell.tsx) makes the sign-
+in/board decision client-side via `useSession()`) rather than gating on
+`auth()` server-side. A Server Component that calls `auth()` per request
+makes the whole route dynamic, which leaves the service worker nothing
+meaningful to precache for a genuinely offline cold start — `next build`
+confirms `/` renders as `○ (Static)` specifically because of this.
+
+**Verified, not just designed: installed and confirmed working with the
+network fully off.** Manual verification (with a real local Postgres,
+since the app needs actual authenticated state to be interesting) found
+two additional real bugs a design review couldn't have caught:
+
+- `next dev`'s per-session, ever-changing asset query strings make
+  service-worker caching fundamentally unreliable in dev mode — offline
+  testing has to run against a production build (`next build && next
+  start`), which is also the only way real users would ever experience
+  it.
+- Auth.js v5 rejects any request whose `Host` header it can't statically
+  verify (`UntrustedHost`) unless `AUTH_URL` is set or `trustHost: true`
+  is passed — this silently breaks sign-in on any production deployment
+  reached by a host Vercel didn't auto-configure `AUTH_URL` for. Fixed by
+  setting `trustHost: true` in
+  [lib/auth/config.ts](../lib/auth/config.ts).
+
+With both fixed: stopping the server entirely and reloading still renders
+the full sign-in shell — dark mode and the chosen accent intact from the
+FOUC-prevention cache — while `/api/*` calls correctly fail fast
+(`ERR_CONNECTION_REFUSED`) rather than serving fabricated data.
+
+### Testing: a third Vitest project for browser-shaped code; Playwright with per-spec test users
+
+`lib/client/**` runs under a new **`client`** Vitest project
+([vitest.workspace.ts](../vitest.workspace.ts)): jsdom + `fake-indexeddb`,
+distinct from the pure-Node `unit` project, since Dexie genuinely needs a
+browser-like environment.
+
+**Playwright e2e needs a real, reachable Postgres** — PGlite (used by the
+`integration` Vitest project) is in-process and can't be reached by a
+separately-launched Next.js server process. There's no real GitHub OAuth
+available in CI either, so [e2e/global-setup.ts](../e2e/global-setup.ts)
+seeds database sessions directly, and
+[e2e/fixtures.ts](../e2e/fixtures.ts) injects the resulting cookie into
+each test's browser context instead of driving the real sign-in flow.
+
+**Each spec file gets its own dedicated seeded user, never one shared
+user** — this is deliberate, not incidental. The event log is append-only
+by design, so a shared user's data from an earlier spec (or an earlier
+run of the same spec) is *still there* when a later assertion queries
+"the board" or "time travel to now"; two debugging sessions confirmed
+this directly (a stray list from a previous run showing up in a later
+run's time-travel snapshot; two different runs' identically-named
+`"blocked"` tags both matching a `getByText` selector). Per-spec isolation
+sidesteps the problem entirely without ever needing to delete anything —
+consistent with the same append-only constraint the whole system is built
+around. `workers: 1` in
+[playwright.config.ts](../playwright.config.ts) runs specs fully
+sequentially: they share one dev server and one Postgres instance, and
+this environment's limited resources turned concurrent execution into
+spurious failures unrelated to app correctness.
+
+Coverage: a genuine `context.setOffline(true)` scenario
+([e2e/offline.spec.ts](../e2e/offline.spec.ts)); two real browser
+contexts (= two independent Dexie stores = two real devices) diverging
+offline and reconciling
+([e2e/divergence.spec.ts](../e2e/divergence.spec.ts)); a time-travel
+assertion against a real past instant
+([e2e/time-travel.spec.ts](../e2e/time-travel.spec.ts)); all 6 built-in
+mode×accent combinations scanned with `@axe-core/playwright`'s
+`color-contrast` rule
+([e2e/theme-contrast.spec.ts](../e2e/theme-contrast.spec.ts)); and axe
+scans with zero **critical** violations across six main views
+([e2e/accessibility.spec.ts](../e2e/accessibility.spec.ts)) — critical,
+not "zero violations at any severity", is the bar, since axe also flags
+purely stylistic best-practice rules that don't actually block a
+keyboard or screen-reader user.
+
+### What's deferred
+
+- **Cross-list drag-and-drop** — reordering within a list is implemented
+  (`dnd-kit`, one `TaskMoved` event per drop); dragging a task onto a
+  *different* list's column is not wired to the drag UI yet, though
+  `moveTask` already supports it identically.
+- **PWA icon** is a single SVG, not a full maskable-icon PNG set — Chrome/
+  Edge/Android accept it, but a production ship would want generated PNG
+  sizes for broader OS-chrome compatibility.
+- **APCA-based contrast** as an upgrade path beyond WCAG 2.x AA, if a
+  future WCAG 3 requirement calls for it — the prompt asks for AA
+  specifically, which is the literal 2.x formula this uses.
