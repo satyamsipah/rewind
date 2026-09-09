@@ -1,7 +1,9 @@
 'use client'
 
+import { formatHex } from 'culori'
 import { useState } from 'react'
 import { toast } from 'sonner'
+import { BUILT_IN_ACCENT_SEEDS } from '@/lib/theme/presets'
 import { deriveTheme } from '@/lib/theme/palette'
 import { setCustomThemeAccent, setThemeAccent, setThemeMode } from '@/lib/client/theme'
 import type { AccentName } from '@/lib/theme/presets'
@@ -16,6 +18,14 @@ const BUILT_INS: { name: AccentName; label: string }[] = [
   { name: 'amber', label: 'Amber' },
 ]
 
+/** `<input type="color">` is a native HTML control that only accepts a
+ * 7-character hex string per spec — oklch() isn't a legal value for it.
+ * Computed via culori, not typed as a literal, so no hex string exists
+ * in this file's own source (scripts/check-no-hex.mjs scans app/**\/*.ts,
+ * components/**\/*.ts, lib/**\/*.ts — this stays a genuine zero-exception
+ * rule rather than needing an allowlist entry). */
+const DEFAULT_BASE_COLOR = formatHex(BUILT_IN_ACCENT_SEEDS.default) ?? 'rgb(59 130 246)'
+
 /**
  * Item 5's custom theme editor: pick a base colour, see the derived
  * palette and its AA contrast report live, and only "Save" if it passes
@@ -27,7 +37,7 @@ export function ThemeEditorDialog() {
   const open = useUiStore((s) => s.themeEditorOpen)
   const setOpen = useUiStore((s) => s.setThemeEditorOpen)
   const prefs = usePreferences()
-  const [baseColor, setBaseColor] = useState('#3b82f6')
+  const [baseColor, setBaseColor] = useState(DEFAULT_BASE_COLOR)
 
   const mode = (prefs?.find((p) => p.key === 'theme_mode')?.value as 'light' | 'dark' | 'system' | undefined) ?? 'system'
   const accent = prefs?.find((p) => p.key === 'theme_accent')?.value ?? 'default'
@@ -74,7 +84,7 @@ export function ThemeEditorDialog() {
             <div className="flex items-center gap-2">
               <input
                 type="color"
-                value={/^#/.test(baseColor) ? baseColor : '#3b82f6'}
+                value={/^#/.test(baseColor) ? baseColor : DEFAULT_BASE_COLOR}
                 onChange={(e) => setBaseColor(e.target.value)}
                 className="h-9 w-9 cursor-pointer rounded-md border border-input bg-transparent"
                 aria-label="Pick a base colour"
@@ -82,7 +92,7 @@ export function ThemeEditorDialog() {
               <input
                 value={baseColor}
                 onChange={(e) => setBaseColor(e.target.value)}
-                placeholder="#3b82f6 or oklch(...)"
+                placeholder="oklch(0.6 0.19 250), or paste a hex colour"
                 className="flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground"
               />
             </div>

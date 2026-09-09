@@ -29,6 +29,7 @@ export function SyncStatusBadge() {
   return (
     <button
       type="button"
+      data-testid="sync-status"
       onClick={() => triggerSync()}
       title={event.lastError ?? config.label}
       className={cn('flex items-center gap-1 rounded-md px-1.5 py-1 text-xs transition-colors hover:bg-accent', config.tone)}

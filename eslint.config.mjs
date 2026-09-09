@@ -27,6 +27,13 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
+    // public/sw.js runs in the Service Worker global scope, not Node or
+    // the browser window — `self`, `caches`, `fetch`, `clients` are all
+    // real globals there.
+    files: ['public/**/*.js'],
+    languageOptions: { globals: globals.serviceworker },
+  },
+  {
     files: ['lib/domain/**/*.ts'],
     ignores: ['lib/domain/**/*.test.ts'],
     rules: {

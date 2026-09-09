@@ -116,7 +116,13 @@ export function Sidebar() {
       </nav>
 
       <div className="flex flex-col gap-1 border-t border-border pt-3">
-        <Button variant="ghost" size="sm" className="justify-start gap-2" onClick={() => setHistoryOpen(true)}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="justify-start gap-2"
+          onClick={() => setHistoryOpen(true)}
+          aria-label="Open activity history"
+        >
           <History className="h-4 w-4" /> History
           <kbd className="ml-auto rounded border border-border px-1 text-xs text-muted-foreground">⌘H</kbd>
         </Button>
