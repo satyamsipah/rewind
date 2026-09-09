@@ -76,14 +76,22 @@ export async function runSyncCycle(deps: SyncEngineDeps): Promise<SyncResult> {
     throw new SyncRejectedError(response.rejected)
   }
 
-  const acceptedIds = response.accepted.map((a) => a.id)
-  if (acceptedIds.length > 0) await outbox.markAccepted(acceptedIds)
+  // Both `accepted` AND `duplicates` mean "the server already has this
+  // event, stop resending it" — treating only `accepted` as confirmation
+  // is the bug that breaks the "app closed mid-sync" case: if the server
+  // committed a batch but the client died before the response arrived, a
+  // resend of that identical batch comes back entirely as `duplicates`,
+  // and without this, those events would sit in the outbox forever,
+  // resent every cycle. Idempotent dedupe-by-id (CLAUDE.md principle 4)
+  // is exactly what makes clearing on `duplicates` safe here.
+  const confirmedIds = [...response.accepted.map((a) => a.id), ...response.duplicates]
+  if (confirmedIds.length > 0) await outbox.markAccepted(confirmedIds)
   if (response.events.length > 0) await outbox.applyRemote(response.events)
 
   await cursor.setSinceSeq(response.next_seq)
   await cursor.setClock(response.server_clock)
 
-  return { accepted: acceptedIds.length, pulled: response.events.length, hasMore: response.has_more }
+  return { accepted: response.accepted.length, pulled: response.events.length, hasMore: response.has_more }
 }
 
 export class SyncRejectedError extends Error {
