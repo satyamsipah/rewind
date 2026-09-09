@@ -2,9 +2,9 @@ import type { AnyEvent, EventType } from '@/lib/events/schemas'
 
 /**
  * The type + payload of the compensating event for `event`, per the
- * inverse column in lib/events/schemas.ts. Every one of the 15 event
- * types is derivable purely from the event's own fields — none need the
- * state the event was applied to — which keeps this a pure function, as
+ * inverse column in lib/events/schemas.ts. Every event type is derivable
+ * purely from the event's own fields — none need the state the event was
+ * applied to — which keeps this a pure function, as
  * .claude/rules/domain.md requires of everything under lib/domain/.
  *
  * This does NOT mint a new event (no id, no vector_clock, no timestamps —
@@ -57,5 +57,7 @@ export function inverse(event: AnyEvent): InversePayload {
       return { type: 'ListArchived', payload: { from: event.payload.to, to: event.payload.from } }
     case 'NoteAttached':
       return { type: 'NoteAttached', payload: { from: event.payload.to, to: event.payload.from } }
+    case 'PreferenceSet':
+      return { type: 'PreferenceSet', payload: { key: event.payload.key, from: event.payload.to, to: event.payload.from } }
   }
 }

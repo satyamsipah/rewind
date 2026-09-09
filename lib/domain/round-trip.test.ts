@@ -66,6 +66,7 @@ describe('round-trip: apply then inverse restores original state', () => {
       list_id: listId,
       title: 'Write report',
       position: 'a0',
+      parent_task_id: null,
       completed: false,
       completed_at: null,
       due_date: null,
@@ -389,7 +390,28 @@ describe('round-trip: apply then inverse restores original state', () => {
     expect(observable(after)).toEqual(observable(before))
   })
 
-  it('covers all 15 event types — fails if a new type is added without a case above', () => {
+  it('PreferenceSet', () => {
+    covered.add('PreferenceSet')
+    const userId = fakeId()
+    const setup = [
+      buildEvent({
+        type: 'PreferenceSet' as const,
+        entity_id: userId,
+        entity_type: 'user' as const,
+        payload: { key: 'theme_mode' as const, from: null, to: 'light' },
+      }),
+    ]
+    const target = buildEvent({
+      type: 'PreferenceSet',
+      entity_id: userId,
+      entity_type: 'user',
+      payload: { key: 'theme_mode', from: 'light', to: 'dark' },
+    })
+    const { before, after } = applyThenInvert(setup, target)
+    expect(observable(after)).toEqual(observable(before))
+  })
+
+  it('covers every event type — fails if a new type is added without a case above', () => {
     expect([...covered].sort()).toEqual([...EVENT_TYPES].sort())
   })
 })

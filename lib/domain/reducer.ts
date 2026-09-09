@@ -1,6 +1,6 @@
-import type { AnyEvent, EventOfType } from '@/lib/events/schemas'
+import type { AnyEvent, EventOfType, PreferenceKey } from '@/lib/events/schemas'
 import { upcast } from '@/lib/events/upcast'
-import type { AppState, ListState, TaskState } from './state'
+import type { AppState, ListState, Preferences, TaskState } from './state'
 import { emptyState } from './state'
 import { resolveBiasedBoolean, resolveField, type FieldWrite } from './merge'
 
@@ -8,8 +8,13 @@ import { resolveBiasedBoolean, resolveField, type FieldWrite } from './merge'
  * change resolved output for existing events. lib/db/snapshots.ts stores
  * this alongside every snapshot and ignores (recomputes) any snapshot
  * whose reducer_version doesn't match — so a reducer change invalidates
- * every snapshot automatically instead of silently serving stale state. */
-export const REDUCER_VERSION = 1
+ * every snapshot automatically instead of silently serving stale state.
+ * Bumped for `PreferenceSet` and subtask (`parent_task_id`) support:
+ * both are purely additive (a new event type, and an optional field an
+ * old reducer would have silently ignored), but the version still moves
+ * so a mixed-version deployment can never resume from a snapshot taken by
+ * a reducer that didn't know about them yet. */
+export const REDUCER_VERSION = 2
 
 /**
  * `reduce(events) => AppState` is the single pure function this whole
@@ -43,8 +48,14 @@ export function reduce(events: AnyEvent[]): AppState {
     const entityType = entityEvents[0]!.entity_type
     if (entityType === 'task') {
       state.tasks[entityId] = buildTask(entityId, entityEvents)
-    } else {
+    } else if (entityType === 'list') {
       state.lists[entityId] = buildList(entityId, entityEvents)
+    } else {
+      // 'user' — there is normally exactly one such entity_id (the
+      // signed-in user's own id) per local event log, but merging
+      // multiple is harmless: preferences is a flat, not entity-nested,
+      // slice (lib/domain/state.ts).
+      Object.assign(state.preferences, buildPreferences(entityEvents))
     }
   }
 
@@ -69,7 +80,7 @@ function buildTask(id: string, events: AnyEvent[]): TaskState {
   const created = events.find((e): e is EventOfType<'TaskCreated'> => e.type === 'TaskCreated')
 
   const titleWrites: FieldWrite<string>[] = []
-  const moveWrites: FieldWrite<{ list_id: string; position: string }>[] = []
+  const moveWrites: FieldWrite<{ list_id: string; position: string; parent_task_id: string | null }>[] = []
   const doneWrites: FieldWrite<{ completed: boolean; completed_at: string | null }>[] = []
   const dueDateWrites: FieldWrite<string | null>[] = []
   const priorityWrites: FieldWrite<string | null>[] = []
@@ -79,7 +90,13 @@ function buildTask(id: string, events: AnyEvent[]): TaskState {
 
   if (created) {
     titleWrites.push(write(created, created.payload.title))
-    moveWrites.push(write(created, { list_id: created.payload.list_id, position: created.payload.position }))
+    moveWrites.push(
+      write(created, {
+        list_id: created.payload.list_id,
+        position: created.payload.position,
+        parent_task_id: created.payload.parent_task_id ?? null,
+      }),
+    )
   }
 
   for (const event of events) {
@@ -88,7 +105,7 @@ function buildTask(id: string, events: AnyEvent[]): TaskState {
         titleWrites.push(write(event, event.payload.to))
         break
       case 'TaskMoved':
-        moveWrites.push(write(event, event.payload.to))
+        moveWrites.push(write(event, { ...event.payload.to, parent_task_id: event.payload.to.parent_task_id ?? null }))
         break
       case 'TaskCompleted':
         doneWrites.push(write(event, { completed: true, completed_at: event.payload.completed_at }))
@@ -128,7 +145,8 @@ function buildTask(id: string, events: AnyEvent[]): TaskState {
     }
   }
 
-  const move = moveWrites.length > 0 ? resolveField(moveWrites).value : { list_id: '', position: '' }
+  const move =
+    moveWrites.length > 0 ? resolveField(moveWrites).value : { list_id: '', position: '', parent_task_id: null }
   const done =
     doneWrites.length > 0 ? resolveField(doneWrites).value : { completed: false, completed_at: null as string | null }
 
@@ -142,6 +160,7 @@ function buildTask(id: string, events: AnyEvent[]): TaskState {
     list_id: move.list_id,
     title: titleWrites.length > 0 ? resolveField(titleWrites).value : '',
     position: move.position,
+    parent_task_id: move.parent_task_id,
     completed: done.completed,
     completed_at: done.completed_at,
     due_date: dueDateWrites.length > 0 ? resolveField(dueDateWrites).value : null,
@@ -185,4 +204,21 @@ function buildList(id: string, events: AnyEvent[]): ListState {
     archived: archivedWrites.length > 0 ? resolveField(archivedWrites).value : false,
     created_at: created?.client_timestamp ?? earliestTimestamp(events),
   }
+}
+
+function buildPreferences(events: AnyEvent[]): Preferences {
+  const writesByKey = new Map<PreferenceKey, FieldWrite<string | null>[]>()
+
+  for (const event of events) {
+    if (event.type !== 'PreferenceSet') continue
+    const bucket = writesByKey.get(event.payload.key) ?? []
+    bucket.push(write(event, event.payload.to))
+    writesByKey.set(event.payload.key, bucket)
+  }
+
+  const preferences: Preferences = {}
+  for (const [key, writes] of writesByKey) {
+    preferences[key] = resolveField(writes).value
+  }
+  return preferences
 }

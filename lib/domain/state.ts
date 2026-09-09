@@ -1,4 +1,4 @@
-import type { Priority } from '@/lib/events/schemas'
+import type { PreferenceKey, Priority } from '@/lib/events/schemas'
 
 /**
  * Projected (materialised) state. This is what `reduce()` (reducer.ts)
@@ -13,6 +13,11 @@ export interface TaskState {
   list_id: string
   title: string
   position: string
+  /** Parent task id for a subtask, null for a top-level task. Travels in
+   * the same atomic move pair as list_id/position (lib/events/schemas.ts
+   * TaskMoved) so a concurrent re-parent and a concurrent list-move can
+   * never merge into a task with mismatched list/parent/position. */
+  parent_task_id: string | null
   completed: boolean
   completed_at: string | null
   due_date: string | null
@@ -35,13 +40,19 @@ export interface ListState {
   created_at: string
 }
 
+/** Flat, not nested by entity id — there is conceptually one
+ * preference-holder (the signed-in user) per local event log. Absent key
+ * = never set = caller falls back to a built-in default. */
+export type Preferences = Partial<Record<PreferenceKey, string | null>>
+
 export interface AppState {
   tasks: Record<string, TaskState>
   lists: Record<string, ListState>
+  preferences: Preferences
 }
 
 export function emptyState(): AppState {
-  return { tasks: {}, lists: {} }
+  return { tasks: {}, lists: {}, preferences: {} }
 }
 
 /**
@@ -55,5 +66,6 @@ export function observable(state: AppState): AppState {
   return {
     tasks: Object.fromEntries(Object.entries(state.tasks).filter(([, t]) => !t.deleted)),
     lists: Object.fromEntries(Object.entries(state.lists).filter(([, l]) => !l.archived)),
+    preferences: state.preferences,
   }
 }

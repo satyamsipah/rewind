@@ -21,7 +21,9 @@ export function describe(event: AnyEvent): string {
     case 'TaskRestored':
       return 'restored task'
     case 'TaskMoved':
-      return `moved task to list ${event.payload.to.list_id}`
+      return event.payload.to.parent_task_id
+        ? 'moved task under a new parent task'
+        : `moved task to list ${event.payload.to.list_id}`
     case 'TaskDueDateSet':
       return event.payload.to ? `set due date to ${event.payload.to}` : 'cleared due date'
     case 'TaskPriorityChanged':
@@ -38,5 +40,7 @@ export function describe(event: AnyEvent): string {
       return event.payload.to ? 'archived list' : 'unarchived list'
     case 'NoteAttached':
       return event.payload.to ? 'attached a note' : 'removed the note'
+    case 'PreferenceSet':
+      return `changed ${event.payload.key.replace('_', ' ')}`
   }
 }
