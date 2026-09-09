@@ -8,6 +8,7 @@ import { setCachedUserId } from '@/lib/client/identity'
 import { startSyncEngine } from '@/lib/client/sync-engine'
 import { useSyncStatus } from '@/lib/client/hooks'
 import { useThemeSync } from '@/lib/client/theme'
+import { useRegisterServiceWorker } from '@/lib/client/register-sw'
 import { CommandPalette } from '@/components/command-palette'
 import { ShortcutSheet } from '@/components/shortcut-sheet'
 import { useKeyboardShortcuts } from '@/lib/client/shortcuts'
@@ -32,6 +33,7 @@ function Bootstrap({ children }: { children: React.ReactNode }) {
   useThemeSync()
   useKeyboardShortcuts()
   useMergeToasts()
+  useRegisterServiceWorker()
 
   return (
     <>

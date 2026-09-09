@@ -11,9 +11,11 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
+  // rgb(), not hex — see app/manifest.ts for why this one field is
+  // exempt from referencing our own CSS custom properties.
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
-    { media: '(prefers-color-scheme: dark)', color: '#0a0a0a' },
+    { media: '(prefers-color-scheme: light)', color: 'rgb(252 252 252)' },
+    { media: '(prefers-color-scheme: dark)', color: 'rgb(30 30 30)' },
   ],
 }
 
