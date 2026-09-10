@@ -536,3 +536,84 @@ keyboard or screen-reader user.
 - **APCA-based contrast** as an upgrade path beyond WCAG 2.x AA, if a
   future WCAG 3 requirement calls for it — the prompt asks for AA
   specifically, which is the literal 2.x formula this uses.
+
+## Deploy, docs, and Google Calendar sync (scoped out)
+
+### Postgres: Render, not Neon
+
+**Chosen: Render.** This session has direct MCP tool access to a
+connected Render account — provisioning, running the actual `drizzle/`
+migrations, and querying the instance were all done without leaving the
+session or asking for manual dashboard steps. **Rejected: Neon** — no
+comparable API access was available here, so using it would have meant
+asking for a manually-created project and a pasted connection string for
+no offsetting benefit for this deployment. `CLAUDE.md`'s "Neon or Render"
+already treats them as interchangeable for this project; nothing about
+Rewind's data model favours one over the other.
+
+**Trade-off worth knowing:** the free Render Postgres plan **expires 30
+days after creation** and is then suspended. That's fine for standing up
+a live demo now, but means the production database (and therefore the
+live demo and the seeded history) will need upgrading to a paid plan — or
+migrating to Neon, which has no such expiry on its free tier — before day
+30, or it stops working.
+
+### Demo strategy: a real seeded account, not a public read-only route
+
+**Chosen:** sign into the live deployment once with a real GitHub
+account, seed rich history (lists, tasks, completions, moves, tag
+changes, a couple of undos) directly into Postgres under that account,
+and use it to capture the README's screenshots and time-travel GIF. The
+live demo link is the app's real sign-in page — a new visitor signs in
+with their own GitHub and starts empty, exactly like any other real
+deployment of this app.
+
+**Rejected: a public, unauthenticated `/demo` route** rendering a seeded
+account's board/history read-only to any visitor with no sign-in. It
+would make "something to show immediately" true for a first-time visitor
+in a way the chosen option doesn't, but it's a genuinely new feature (a
+whole auth-bypassing view, plus deciding what it's allowed to reveal)
+rather than "seed some data" — out of proportion to what was asked here.
+
+### Google Calendar sync: designed, not built
+
+The Google Calendar MCP connected to this session authenticates *this
+session* to *one* Google account (calendar reasoning skill/chat access) —
+it does not hand the deployed Rewind application OAuth credentials to
+sync *other users'* calendars. Building that for real needs a second,
+independent OAuth integration on top of GitHub's: a Google Cloud project,
+an OAuth consent screen (subject to Google's own review for the Calendar
+write scope), a `Google` provider alongside `GitHub` in
+[lib/auth/config.ts](../lib/auth/config.ts), refresh-token storage, and a
+sync job — meaningfully more work than the rest of this deploy prompt
+combined, and blocked on a manual Google Cloud Console setup step this
+session can't do on its own (this is *not* a design objection — it's a
+setup step only the account owner can do).
+
+**Confirmed with the user: design only, not built.** If this is picked up
+later, the one point worth calling out from the domain model design
+review: a Google refresh token must **never** live inside the append-only
+`events` table. That table is the one thing in this app that's fully
+exposed via `GET /history`, synced to every device, and rendered in the
+time-travel view — exactly the properties you don't want for a
+credential. It would need its own table (e.g. `calendar_connections`,
+keyed by `user_id`, holding the encrypted refresh token and the chosen
+calendar id), separate from the event log entirely, with the
+*connection state* (connected: true/false, which calendar) as the only
+part that's a legitimate `PreferenceSet`-style event — the token itself
+stays server-side, never round-tripped to a client at all.
+
+### `.env.example`: every variable documented, no values invented
+
+Per the request not to guess or invent real values:
+[.env.example](../.env.example) documents `DATABASE_URL`, `AUTH_SECRET`,
+`AUTH_URL`, `AUTH_GITHUB_ID`, and `AUTH_GITHUB_SECRET` — what each is
+for, where it's read (a comment pointing at the exact file), and how to
+obtain or generate it — with every value left blank or a placeholder.
+`AUTH_SECRET` for the actual deployment was generated directly (it's a
+random value, not something the user "knows" — asking for it would have
+been asking them to run the same generator command themselves and paste
+the result back). The GitHub OAuth App's Client ID/Secret, and the
+Postgres connection string for anything other than this session's own
+Render provisioning, were asked for or produced via connected tools
+rather than invented.
