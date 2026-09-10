@@ -1,13 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { and, desc, eq, lt } from 'drizzle-orm'
 import { z } from 'zod'
-import { getDb } from '@/lib/db/client'
-import { events } from '@/lib/db/schema'
+import { getDb, type Db } from '@/lib/db/client'
+import { events, projections } from '@/lib/db/schema'
 import { rowToEvent } from '@/lib/db/mappers'
 import { describe } from '@/lib/domain/describe'
+import type { ListState } from '@/lib/domain/state'
 import { EVENT_TYPES } from '@/lib/events/schemas'
 import { requireUserId } from '@/lib/auth/session'
 import { apiError } from '@/lib/api/errors'
+
+/** Current names, not the names as of the event — a list rename applies
+ * retroactively to how past moves read, which is the same thing the board
+ * does and avoids implying the list was called something else at the time. */
+async function currentListNames(db: Db, userId: string): Promise<Record<string, string>> {
+  const rows = await db
+    .select()
+    .from(projections)
+    .where(and(eq(projections.userId, userId), eq(projections.entityType, 'list')))
+
+  return Object.fromEntries(rows.map((row) => [row.entityId, (row.state as ListState).name]))
+}
 
 const HistoryQuery = z.object({
   entity_id: z.string().uuid().optional(),
@@ -37,16 +50,23 @@ export async function GET(request: NextRequest) {
   if (query.actor_id) conditions.push(eq(events.actorId, query.actor_id))
   if (query.before_seq) conditions.push(lt(events.userSeq, BigInt(query.before_seq)))
 
-  const rows = await getDb()
+  const db = getDb()
+  const rows = await db
     .select()
     .from(events)
     .where(and(...conditions))
     .orderBy(desc(events.userSeq))
     .limit(query.limit)
 
+  // Only TaskMoved renders a list name, and most pages of history contain
+  // none — so this second query is skipped rather than run per request.
+  const listNames = rows.some((row) => row.type === 'TaskMoved')
+    ? await currentListNames(db, userId)
+    : {}
+
   const items = rows.map((row) => {
     const event = rowToEvent(row)
-    return { event, user_seq: Number(row.userSeq), description: describe(event) }
+    return { event, user_seq: Number(row.userSeq), description: describe(event, { listNames }) }
   })
 
   return NextResponse.json({

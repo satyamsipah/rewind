@@ -30,6 +30,13 @@ function effectiveTimestamp(event: AnyEvent): string {
   return event.server_timestamp ?? event.client_timestamp
 }
 
+/** Read inside the live queries below (not hoisted) so a list rename
+ * re-renders the timeline text that mentions it. */
+async function currentListNames(): Promise<Record<string, string>> {
+  const lists = await db.lists.toArray()
+  return Object.fromEntries(lists.map((list) => [list.id, list.name]))
+}
+
 export function useActivityTimeline(filters: HistoryFilters = {}) {
   return useLiveQuery(async () => {
     let events = await db.events.toArray()
@@ -38,7 +45,8 @@ export function useActivityTimeline(filters: HistoryFilters = {}) {
     if (filters.from) events = events.filter((e) => effectiveTimestamp(e) >= filters.from!)
     if (filters.to) events = events.filter((e) => effectiveTimestamp(e) <= filters.to!)
     events.sort((a, b) => (effectiveTimestamp(a) < effectiveTimestamp(b) ? 1 : -1))
-    return events.map((event) => ({ event, description: describe(event) }))
+    const listNames = await currentListNames()
+    return events.map((event) => ({ event, description: describe(event, { listNames }) }))
   }, [filters.entityId, filters.type, filters.from, filters.to])
 }
 
@@ -46,7 +54,8 @@ export function useTaskHistory(taskId: string) {
   return useLiveQuery(async () => {
     const events = await db.events.where('entity_id').equals(taskId).toArray()
     events.sort((a, b) => (effectiveTimestamp(a) < effectiveTimestamp(b) ? -1 : 1))
-    return events.map((event) => ({ event, description: describe(event) }))
+    const listNames = await currentListNames()
+    return events.map((event) => ({ event, description: describe(event, { listNames }) }))
   }, [taskId])
 }
 
