@@ -617,3 +617,49 @@ the result back). The GitHub OAuth App's Client ID/Secret, and the
 Postgres connection string for anything other than this session's own
 Render provisioning, were asked for or produced via connected tools
 rather than invented.
+
+### Render SSL: `?sslmode=require` in the URL, not an `ssl` option in code
+
+Render's Postgres refuses non-TLS connections outright (`FATAL: SSL/TLS
+required`), and [lib/db/client.ts](../lib/db/client.ts) deliberately
+calls `postgres(url)` with no second argument, so there is nowhere in
+code to pass `ssl: 'require'` without adding a provider-specific branch.
+The fix is to put it in the connection string itself —
+`...?sslmode=require` — which postgres-js parses natively. Verified both
+ways against the live instance before running migrations: the bare URL
+fails, the same URL with `sslmode=require` succeeds through the exact
+`postgres(url)` call the app makes.
+
+Chosen over the alternative (an `ssl` option in `getDb()`, gated on
+`NODE_ENV` or a hostname check) because that hard-codes one provider's
+transport requirements into the data layer, and would have to be revised
+for every future host. A connection string is already the unit of
+configuration that travels between environments — the SSL requirement is
+a property of *that database*, not of the application.
+
+Practical consequence: **the `DATABASE_URL` set in Vercel must carry the
+`?sslmode=require` suffix.** A connection string pasted straight from
+Render's dashboard does not include it, and the resulting failure is a
+runtime connection error, not a build failure — so it surfaces only when
+the first request actually touches the database.
+
+### Deployment gotchas worth not rediscovering
+
+Two things cost real time during the first deploy and are worth writing
+down, since neither produces an error message that names the cause:
+
+- **Vercel bakes environment variables in at build time.** A variable
+  added *after* a build exists nowhere in that build's runtime, and the
+  deployment keeps serving happily with it missing. Auth.js's symptom for
+  a missing `AUTH_GITHUB_ID` is a redirect to GitHub with an empty
+  `client_id=`, which GitHub answers with a **404** — so the error
+  surfaces on GitHub's domain, never in the app's own logs. Any env var
+  change needs a fresh deploy, and the way to verify one landed is to
+  replay the real sign-in POST and read the `client_id` in the `Location`
+  header (`/api/auth/csrf` for a token, then POST it to
+  `/api/auth/signin/github`), not to load the page and look.
+- **`GET /api/auth/signin/:provider` is not a supported Auth.js action.**
+  It returns a generic "There is a problem with the server configuration"
+  page whose underlying error is `UnknownAction` — nothing to do with
+  configuration. Testing that route with a plain GET produces a
+  convincing false positive; the real flow is a CSRF-token POST.
