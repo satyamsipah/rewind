@@ -16,7 +16,8 @@
     "test:e2e": "playwright test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:rebuild-projections": "tsx scripts/rebuild-projections.ts"
+    "db:rebuild-projections": "tsx scripts/rebuild-projections.ts",
+    "db:seed-demo": "tsx scripts/seed-demo.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.7.4",

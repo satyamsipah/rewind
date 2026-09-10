@@ -4,10 +4,12 @@
 event, so your whole history is scrubbable like a video timeline, and two
 devices editing the same task offline both win.**
 
-🔗 **Live demo:** _pending deployment — see the note at the bottom of this
-README_
-📺 **Screenshots / time-travel GIF:** _pending — captured once the demo
-account is seeded (see below)_
+🔗 **Live demo:** [rewind-eosin-nu.vercel.app](https://rewind-eosin-nu.vercel.app)
+— sign in with your own GitHub account; a new visitor starts with an empty
+board (see "Design decisions and trade-offs" for why there's no public
+read-only demo route).
+📺 **Screenshots / time-travel GIF:** _pending — captured from the seeded
+demo account_
 
 See [CLAUDE.md](CLAUDE.md) for the non-negotiable principles this repo is
 built against, [docs/DECISIONS.md](docs/DECISIONS.md) for the reasoning
