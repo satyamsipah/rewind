@@ -663,3 +663,54 @@ down, since neither produces an error message that names the cause:
   page whose underlying error is `UnknownAction` — nothing to do with
   configuration. Testing that route with a plain GET produces a
   convincing false positive; the real flow is a CSRF-token POST.
+
+### Service worker: three strategies, because the shell isn't one thing
+
+v1 applied stale-while-revalidate to every same-origin GET, including the
+HTML document. That put **every user exactly one deploy behind on their
+first load after a release**: the cached document still named the
+*previous* build's content-hashed chunks, and those chunks were cached
+too, so the whole previous build was served coherently. The background
+revalidate replaced the cached document, so a second load corrected it —
+which is precisely why it went unnoticed. It was caught only because a
+timeline fix shipped in v1.0.1 and the deployed bundle demonstrably
+contained it while the browser kept rendering the old text.
+
+The document and the assets it names are different kinds of thing, so
+they now get different strategies:
+
+- **Document (`request.mode === 'navigate'`): network-first**, falling
+  back to the cached shell when the network genuinely fails. It is the
+  mutable index naming immutable files, so a stale copy is a stale map.
+- **`/_next/static/*`: cache-first.** Content-hashed, therefore
+  immutable — a URL match is a body match, so there is nothing to
+  revalidate.
+- **Everything else same-origin: stale-while-revalidate**, as before.
+  The icon and manifest, where staleness costs nothing.
+
+`CACHE_NAME` moved to `rewind-shell-v2` so `activate` evicts the v1 cache
+outright, including documents cached under the old strategy.
+
+### Offline cold launch shows the signed-out shell
+
+Verified by e2e (`e2e/offline.spec.ts`, "cold launch with the network
+fully off"): with the network fully off the app **does** load — the
+document, JS and CSS all come from the cache and React boots. But it
+renders the *signed-out* landing page even for a user with a valid
+session, because `/api/*` is deliberately never cached (sync must never
+read a stale response pretending to be live server state), so Auth.js's
+client-side session check fails and the client concludes "signed out".
+
+Left as-is for now, and recorded rather than quietly fixed, because the
+honest fix is a real decision rather than a tweak: caching the session
+response contradicts the "never serve stale auth state" rule, and the
+alternative — trusting a locally cached identity while offline — is a
+change to the auth model, not the cache. Worth noting the gap is
+narrower than it looks: the local event log, projections and every
+mutation path are already fully offline-capable, so what's missing is
+the *identity check* gating the UI, not the data.
+
+**How to reproduce the strategy bug if it ever regresses:** deploy any
+visible change, load the app once, and confirm the change is absent;
+the deployed chunk can be checked independently with
+`curl <origin>/_next/static/chunks/app/page-<hash>.js | grep <marker>`.

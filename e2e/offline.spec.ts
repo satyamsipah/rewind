@@ -42,4 +42,45 @@ test.describe('offline scenario', () => {
     await page.reload()
     await expect(page.getByText(taskName)).toBeVisible()
   })
+
+  /**
+   * The service worker's whole reason to exist (public/sw.js): the app
+   * must LOAD with the network fully off, not merely keep working after
+   * a successful load. Guards the network-first document strategy — if
+   * its offline fallback to the cached shell regresses, a cold launch
+   * goes blank and only a test like this notices.
+   */
+  test('cold launch with the network fully off still renders the app', async ({ page, context }) => {
+    await signIn(context, 'offline')
+
+    // First load registers the worker; the second runs with it already
+    // in control, which is when the shell and its content-hashed chunks
+    // actually get cached (nothing is cached for a page the worker
+    // wasn't controlling yet).
+    await page.goto('/')
+    await page.evaluate(() => navigator.serviceWorker.ready)
+    await page.reload()
+    await expect(page.getByTestId('sync-status')).toBeVisible()
+    await page.evaluate(() => navigator.serviceWorker.ready)
+
+    await context.setOffline(true)
+    const response = await page.reload()
+
+    // Served from cache, not the network — a browser error page would
+    // not be a 200, and the title comes from the cached document.
+    expect(response?.status()).toBe(200)
+    await expect(page).toHaveTitle('Rewind')
+
+    // This copy is client-rendered (the SSR'd body is an empty shell), so
+    // seeing it proves the cached JS and CSS booted React too, not just
+    // that the document came back.
+    //
+    // It's the SIGNED-OUT landing copy even for a user with a live
+    // session: /api/* is deliberately never cached (see public/sw.js), so
+    // Auth.js's session check fails offline and the client treats the
+    // user as signed out. That's a known gap in the offline story rather
+    // than something this test is asserting is correct — see
+    // docs/DECISIONS.md "Offline cold launch shows the signed-out shell".
+    await expect(page.getByText(/saved locally first/)).toBeVisible()
+  })
 })
