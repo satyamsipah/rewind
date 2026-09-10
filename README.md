@@ -8,8 +8,21 @@ devices editing the same task offline both win.**
 — sign in with your own GitHub account; a new visitor starts with an empty
 board (see "Design decisions and trade-offs" for why there's no public
 read-only demo route).
-📺 **Screenshots / time-travel GIF:** _pending — captured from the seeded
-demo account_
+
+![The Rewind task board](docs/screenshots/board.png)
+
+**Time travel — the board as it was at any past instant, reconstructed by
+replaying the event log up to that timestamp.** Not a snapshot that was
+saved for you: the state is *derived*, so any instant in history is
+addressable, not just the ones someone thought to bookmark.
+
+![The time-travel view, showing the board reconstructed at a past timestamp](docs/screenshots/time-travel.png)
+
+**Every mutation, in order, with what actually changed.** This is the same
+log the board is projected from — not a parallel audit trail that can drift
+out of sync with the real state.
+
+![The activity timeline, listing every event in reverse-chronological order](docs/screenshots/activity-timeline.png)
 
 See [CLAUDE.md](CLAUDE.md) for the non-negotiable principles this repo is
 built against, [docs/DECISIONS.md](docs/DECISIONS.md) for the reasoning
